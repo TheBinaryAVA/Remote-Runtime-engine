@@ -11,7 +11,6 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/TheBinaryAVA/Remote-Runtime-engine/pkg/events"
-	"github.com/TheBinaryAVA/Remote-Runtime-engine/pkg/store"
 )
 
 var upgrader = websocket.Upgrader{

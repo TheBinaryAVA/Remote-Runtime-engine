@@ -65,6 +65,11 @@ func NewServer(cfg ServerConfig, q queue.JobQueue, bus events.EventBus, st store
 	return s
 }
 
+// ServeHTTP delegates to the internal router handler for testing and middleware chaining.
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	s.httpServer.Handler.ServeHTTP(w, r)
+}
+
 // Start launches the HTTP server.
 func (s *Server) Start() error {
 	log.Printf("[API Gateway] Server listening on %s (MaxQueueDepth=%d)", s.cfg.Addr, s.cfg.MaxQueueDepth)

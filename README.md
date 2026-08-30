@@ -10,60 +10,78 @@
 
 ## 📖 Table of Contents
 - [Architecture Overview](#-architecture-overview)
+- [Distributed Worker Architecture (Phase 2)](#-distributed-worker-architecture-phase-2)
 - [System Requirements & Kernel Setup](#-system-requirements--kernel-setup)
-- [Supported Languages (Phase 1)](#-supported-languages-phase-1)
+- [Supported Languages](#-supported-languages)
 - [Deterministic Metrics & Verdicts](#-deterministic-metrics--verdicts)
 - [Security & Sandboxing Defenses](#-security--sandboxing-defenses)
 - [Installation & Quick Start](#-installation--quick-start)
+- [Docker Compose Deployment](#-docker-compose-deployment)
+- [REST & WebSocket API](#-rest--websocket-api)
 - [CLI Reference](#-cli-reference)
 - [Malicious Test Payloads](#-malicious-test-payloads)
 - [Testing](#-testing)
-- [Roadmap (Phase 2 & Beyond)](#-roadmap-phase-2--beyond)
+- [Roadmap](#-roadmap)
 
 ---
 
 ## 🏗 Architecture Overview
 
 ```
-                      +-----------------------------+
-                      |   CLI / Queue Consumer API  |
-                      +--------------+--------------+
-                                     |
-                                     v
-                      +-----------------------------+
-                      |   Execution Engine Kernel   |
-                      +--------------+--------------+
-                                     |
-        +----------------------------+----------------------------+
-        |                                                         |
-        v                                                         v
-+-------------------------+                             +-------------------------+
-|  Language Handlers      |                             |   Sandbox Factory       |
-|  - C++ (g++ C++17)      |                             |  - Native cgroup v2     |
-|  - Python (Python 3.10+) |                             |  - Docker Container     |
-+-------------------------+                             |  - Dev Fallback         |
-                                                        +------------+------------+
-                                                                     |
-                                             +-----------------------+-----------------------+
-                                             |                                               |
-                                             v                                               v
-                             +-------------------------------+               +-------------------------------+
-                             |    Native Linux cgroups v2    |               |    Containerized OCI Runner   |
-                             |  - memory.max / memory.peak   |               |  - --read-only rootfs         |
-                             |  - cpu.max / cpu.stat         |               |  - --network none             |
-                             |  - pids.max (fork bomb def)   |               |  - --tmpfs ephemeral mounts   |
-                             |  - unprivileged UID:GID       |               |  - --cap-drop ALL             |
-                             |  - wall-clock SIGKILL timer   |               |  - --memory / --cpus          |
-                             +-------------------------------+               +-------------------------------+
-                                             |                                               |
-                                             +-----------------------+-----------------------+
-                                                                     |
-                                                                     v
-                                                     +-------------------------------+
-                                                     | Metric & Verdict Aggregator   |
-                                                     | (Wall/CPU Time, Peak Mem, OOM)|
-                                                     +-------------------------------+
+                      +-----------------------------------+
+                      |   Client Application / Web UI     |
+                      +-----------------+-----------------+
+                                        |
+                 +----------------------+----------------------+
+                 | (REST POST /submissions)                   | (WebSocket /ws)
+                 v                                             v
++-----------------------------------+       +-----------------------------------+
+|      REST API Gateway             |       |    WebSocket Streaming Hub        |
+|  - Rate Limiting & Backpressure   |       |  - Multiplexed Event Channels     |
+|  - Request Validation             |       |  - Real-time JSON Frame Broadcast |
++-----------------+-----------------+       +-----------------+-----------------+
+                  |                                           ^
+                  v                                           | (Subscribe submission:id)
++-----------------------------------+       +-----------------+-----------------+
+|  Distributed Task Queue (Redis)   |       |    Redis Pub/Sub Event Bus        |
+|  - Atomic LPUSH / BRPOP           |       |  - QUEUED -> COMPILING -> RUNNING |
+|  - Depth Monitoring               |       |  - TESTCASE_PASSED -> COMPLETED   |
++-----------------+-----------------+       +-----------------+-----------------+
+                  |                                           ^
+                  +---------------------+---------------------+
+                                        | (Pull Job / Publish Events)
+                                        v
+                      +-----------------------------------+
+                      |    Scalable Worker Pool Daemon    |
+                      |  - Concurrent Goroutine Workers   |
+                      |  - Warm-Pool Workspace Recycling  |
+                      |  - One-Time Compilation Cache     |
+                      |  - Crash & Panic Recovery Guards  |
+                      +-----------------+-----------------+
+                                        |
+                 +----------------------+----------------------+
+                 |                                             |
+                 v                                             v
++-------------------------------+             +-------------------------------+
+|    Native Linux cgroups v2    |             |    Containerized OCI Runner   |
+|  - memory.max / memory.peak   |             |  - --read-only rootfs         |
+|  - cpu.max / cpu.stat         |             |  - --network none             |
+|  - pids.max (fork bomb def)   |             |  - --tmpfs ephemeral mounts   |
+|  - unprivileged UID:GID       |             |  - --cap-drop ALL             |
+|  - wall-clock SIGKILL timer   |             |  - --memory / --cpus          |
++-------------------------------+             +-------------------------------+
 ```
+
+---
+
+## ⚡ Distributed Worker Architecture (Phase 2)
+
+Phase 2 scales the core engine into a high-concurrency event-driven cluster:
+- **Asynchronous Task Ingestion**: Submissions are pushed to Redis queues, returning `202 Accepted` immediately with a WebSocket subscription URL.
+- **Backpressure Protection**: Automatically protects the engine cluster by returning `429 Too Many Requests` (`Retry-After: 5`) when queue depth exceeds safety limits (`MaxQueueDepth = 500`).
+- **Warm Compilation Cache**: For compiled languages (C++), the source is compiled **once** per submission and executed across all testcases in the batch, slashing latency.
+- **WebSocket Streaming**: Live events (`QUEUED`, `COMPILING`, `RUNNING`, `TESTCASE_START`, `TESTCASE_PASSED`, `TESTCASE_FAILED`, `COMPLETED`, `FAILED`) stream directly to the browser.
+- **Zero-Dependency Mode**: Automatic fallback to in-memory queues, event channels, and stores when Redis is not present.
 
 ---
 
@@ -72,24 +90,22 @@
 ### Native Linux Host
 - **Linux Kernel**: Version 5.8+ recommended (with unified cgroups v2 enabled).
 - **Filesystem**: Unified cgroup hierarchy mounted at `/sys/fs/cgroup`.
-- **User Permissions**: Root permissions required to manage `/sys/fs/cgroup/speedcode` and switch unprivileged process credentials (`UID 1001: GID 1001`).
+- **User Permissions**: Root permissions required for direct cgroups v2 controller creation.
 
 #### Enabling Cgroups v2 on Ubuntu/Debian
-Ensure systemd boots with unified hierarchy by checking:
 ```bash
-# Verify cgroups v2 mount
 stat -fc %T /sys/fs/cgroup
-# Output should be: cgroup2fs
+# Should output: cgroup2fs
 ```
-If not enabled, add the following to `/etc/default/grub`:
+If not enabled, update `/etc/default/grub`:
 ```
 GRUB_CMDLINE_LINUX="systemd.unified_cgroup_hierarchy=1 cgroup_no_v1=all"
 ```
-Then run `sudo update-grub` and reboot.
+Run `sudo update-grub` and reboot.
 
 ---
 
-## 💻 Supported Languages (Phase 1)
+## 💻 Supported Languages
 
 | Language | Extension | Compiler / Interpreter | Flags |
 | :--- | :--- | :--- | :--- |
@@ -101,20 +117,14 @@ Then run `sudo update-grub` and reboot.
 ## 📊 Deterministic Metrics & Verdicts
 
 ### Verdict Status Codes
-- `ACCEPTED`: Solution compiled, ran within all resource limits, and output matched expected solution.
-- `WRONG_ANSWER`: Solution ran successfully but stdout differed from expected testcase output.
-- `TIME_LIMIT_EXCEEDED` (TLE): Execution exceeded wall-clock timeout or CPU quota limit.
-- `MEMORY_LIMIT_EXCEEDED` (MLE): Process breached `memory.max` and was terminated by the kernel OOM-killer.
-- `COMPILATION_ERROR`: Failure during the compilation phase with diagnostic stderr output.
-- `RUNTIME_ERROR`: Process exited with non-zero exit code or fatal signal (e.g. `SIGSEGV`, `SIGFPE`, division by zero).
-- `OUTPUT_LIMIT_EXCEEDED`: Program exceeded the maximum allowed stdout/stderr buffer byte limit (e.g. 1MB).
-- `SYSTEM_ERROR`: Host filesystem or internal orchestration failure.
-
-### Measured Metrics
-- **Wall Time**: Real-time duration measured with microsecond precision.
-- **CPU Time**: Total CPU time (User space + Kernel space) extracted from `cpu.stat` or process `rusage`.
-- **Peak Memory**: Maximum memory high-water mark extracted directly from `memory.peak` in bytes.
-- **Exit Code**: Exact Linux process exit code or signal termination code.
+- `ACCEPTED`: Solution compiled and passed all testcases within resource limits.
+- `WRONG_ANSWER`: Solution ran successfully but stdout differed from expected output.
+- `TIME_LIMIT_EXCEEDED` (TLE): Execution exceeded wall-clock timeout or CPU quota.
+- `MEMORY_LIMIT_EXCEEDED` (MLE): Process breached `memory.max` and was killed by OOM.
+- `COMPILATION_ERROR`: Failure during the compilation phase with diagnostic stderr.
+- `RUNTIME_ERROR`: Process exited with non-zero exit code or fatal signal (`SIGSEGV`, `SIGFPE`).
+- `OUTPUT_LIMIT_EXCEEDED`: Output exceeded maximum allowed stream buffer (1MB).
+- `SYSTEM_ERROR`: Internal orchestration or host failure.
 
 ---
 
@@ -132,79 +142,68 @@ Then run `sudo update-grub` and reboot.
 
 ## 🚀 Installation & Quick Start
 
-### Build Binary
+### Build All Binaries
 ```bash
-# Build engine CLI
-go build -o speedcode-engine cmd/engine/main.go
+# Build CLI engine, API server, and Worker daemon
+make build-all
 ```
 
-### Run Sample Executions
-
-#### 1. Python Accepted Test
+### Launch Distributed Cluster with Docker Compose
 ```bash
-./speedcode-engine \
-  --file=testdata/payloads/accepted/solution.py \
-  --lang=python3 \
-  --input="10 25\n" \
-  --expected="35"
+docker-compose up -d --build
+```
+This spins up:
+- **Redis 7** on port `6379`
+- **SpeedCode REST & WebSocket API Gateway** on port `8080`
+- **Worker Pool #1** (Concurrency 4)
+- **Worker Pool #2** (Concurrency 4)
+
+---
+
+## 📡 REST & WebSocket API
+
+Detailed API documentation is available in [API.md](file:///c:/Cloud%20Projects/API.md).
+
+### Submit a Code Job
+```bash
+curl -X POST http://localhost:8080/api/v1/submissions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "language": "python3",
+    "code": "a, b = map(int, input().split())\nprint(a + b)",
+    "test_cases": [
+      {"id": "tc-1", "input": "5 7\n", "expected_output": "12\n"},
+      {"id": "tc-2", "input": "100 200\n", "expected_output": "300\n"}
+    ]
+  }'
 ```
 
-#### 2. JSON Output Mode
-```bash
-./speedcode-engine \
-  --file=testdata/payloads/accepted/solution.py \
-  --lang=python3 \
-  --input="15 27\n" \
-  --expected="42" \
-  --json
-```
-
-**Output:**
+**Response (`202 Accepted`):**
 ```json
 {
-  "id": "exec-e102e75359cf5622",
-  "verdict": "ACCEPTED",
-  "exit_code": 0,
-  "stdout": "42\n",
-  "stderr": "",
-  "wall_time_ms": 255.83,
-  "cpu_time_ms": 230.25,
-  "peak_memory_kb": 1024,
-  "peak_memory_mb": 1.00,
-  "oom_killed": false,
-  "sandbox_backend": "native_cgroupv2",
-  "executed_at": "2026-08-30T10:44:36.326Z"
+  "submission_id": "sub-a1b2c3d4e5f6",
+  "status": "QUEUED",
+  "ws_url": "/api/v1/submissions/sub-a1b2c3d4e5f6/ws",
+  "enqueued_at": "2026-08-30T10:45:00.000Z"
 }
+```
+
+### Subscribe via WebSocket
+```javascript
+const ws = new WebSocket("ws://localhost:8080/api/v1/submissions/sub-a1b2c3d4e5f6/ws");
+ws.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+  console.log("Live Event:", data.status, data);
+};
 ```
 
 ---
 
 ## 🛠 CLI Reference
 
-```
-Usage of speedcode-engine:
-  -file string
-        Path to source code file (e.g. solution.cpp, solution.py)
-  -code string
-        Inline source code string
-  -lang string
-        Programming language (cpp, python3)
-  -input string
-        Standard input string or @filepath (e.g. @testcase.in)
-  -expected string
-        Expected output string to verify ACCEPTED vs WRONG_ANSWER
-  -time-limit-ms int
-        Wall-clock time limit in milliseconds (default 2000)
-  -memory-limit-mb int
-        Memory limit in Megabytes (default 128)
-  -cpu-quota float
-        CPU core quota (default 1.0)
-  -pids-limit int
-        Maximum PIDs / threads limit (default 32)
-  -sandbox string
-        Sandbox backend: auto, native, docker, dev_process (default "auto")
-  -json
-        Output result as structured JSON
+```bash
+# Standalone CLI execution
+./bin/speedcode-engine --file=solution.cpp --lang=cpp --input="10 20\n" --expected="30" --json
 ```
 
 ---
@@ -212,30 +211,26 @@ Usage of speedcode-engine:
 ## 🧪 Malicious Test Payloads
 
 Included in `testdata/payloads/`:
-
-| Payload | Description | Expected Verdict |
-| :--- | :--- | :--- |
-| `infinite_loop/loop.py` | Infinite `while True` loop | `TIME_LIMIT_EXCEEDED` |
-| `memory_hog/oom.py` | Rapid multi-megabyte physical allocations | `MEMORY_LIMIT_EXCEEDED` |
-| `fork_bomb/bomb.py` | Recursive process spawning (`os.fork()`) | `RUNTIME_ERROR` / `pids.max` blocked |
-| `runtime_error/error.py` | Division by zero (`ZeroDivisionError`) | `RUNTIME_ERROR` |
-| `compile_error/bad.cpp` | Syntactically invalid C++ program | `COMPILATION_ERROR` |
-| `accepted/solution.py` | Standard competitive programming solution | `ACCEPTED` |
+- `infinite_loop/` -> `TIME_LIMIT_EXCEEDED`
+- `memory_hog/` -> `MEMORY_LIMIT_EXCEEDED`
+- `fork_bomb/` -> `RUNTIME_ERROR` / `pids.max` blocked
+- `runtime_error/` -> `RUNTIME_ERROR`
+- `compile_error/` -> `COMPILATION_ERROR`
+- `accepted/` -> `ACCEPTED`
 
 ---
 
 ## 🔬 Testing
 
-Run the full test suite with race detector:
+Run full unit, integration, and concurrency test suites:
 ```bash
-go test -v -race ./...
+make test
 ```
 
 ---
 
-## 🗺 Roadmap (Phase 2 & Beyond)
+## 🗺 Roadmap
 
-- [ ] **Phase 2: Asynchronous Distributed Queue**: Redis/RabbitMQ job ingestion workers with horizontal scaling.
 - [ ] **Phase 3: Expanded Language Support**: Java 21, Rust 1.78, Go 1.22, Node.js 20.
 - [ ] **Phase 4: gRPC & REST Gateway**: Real-time WebSocket streaming of live execution states to the SpeedCode contest portal.
 - [ ] **Phase 5: Seccomp & eBPF Sandboxing**: Syscall filtering (`seccomp-bpf`) to restrict kernel syscall attacks.
@@ -243,4 +238,4 @@ go test -v -race ./...
 ---
 
 ### Developed for GDG VIT Chennai
-
+Created with ❤️ by the GDG VIT Chennai Backend & Systems Engineering Team.
