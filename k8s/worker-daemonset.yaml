@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: speedcode-worker
+  namespace: default
+  labels:
+    app: speedcode-worker
+spec:
+  selector:
+    matchLabels:
+      app: speedcode-worker
+  template:
+    metadata:
+      labels:
+        app: speedcode-worker
+    spec:
+      containers:
+        - name: worker
+          image: speedcode-worker:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: REDIS_URL
+              value: "redis://speedcode-redis:6379/0"
+            - name: CONCURRENCY
+              value: "4"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - SYS_ADMIN
+                - SYS_RESOURCE
+          resources:
+            requests:
+              cpu: "2000m"
+              memory: "2Gi"
+            limits:
+              cpu: "4000m"
+              memory: "4Gi"
+          volumeMounts:
+            - name: cgroup-fs
+              mountPath: /sys/fs/cgroup
+              readOnly: false
+            - name: ephemeral-tmp
+              mountPath: /tmp/speedcode
+      volumes:
+        - name: cgroup-fs
+          hostPath:
+            path: /sys/fs/cgroup
+        - name: ephemeral-tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Gi
