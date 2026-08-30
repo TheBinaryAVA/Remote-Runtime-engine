@@ -1,31 +1,8 @@
 # ⚡ SpeedCode: Isolated Remote Code Execution Engine
 
-> High-performance, isolated Linux execution engine kernel built for **GDG VIT Chennai's Speed-Coding Event**.
-
-[![Go Version](https://img.shields.io/badge/Go-1.22+-00ADD8?style=flat&logo=go)](https://golang.org)
-[![Linux cgroups v2](https://img.shields.io/badge/Isolation-cgroups%20v2-orange)](https://www.kernel.org/doc/html/latest/admin-guide/cgroup-v2.html)
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-
+> High-performance, isolated Linux execution engine kernel 
 ---
-
-## 📖 Table of Contents
-- [Architecture Overview](#-architecture-overview)
-- [Distributed Worker Architecture (Phase 2)](#-distributed-worker-architecture-phase-2)
-- [System Requirements & Kernel Setup](#-system-requirements--kernel-setup)
-- [Supported Languages](#-supported-languages)
-- [Deterministic Metrics & Verdicts](#-deterministic-metrics--verdicts)
-- [Security & Sandboxing Defenses](#-security--sandboxing-defenses)
-- [Installation & Quick Start](#-installation--quick-start)
-- [Docker Compose Deployment](#-docker-compose-deployment)
-- [REST & WebSocket API](#-rest--websocket-api)
-- [CLI Reference](#-cli-reference)
-- [Malicious Test Payloads](#-malicious-test-payloads)
-- [Testing](#-testing)
-- [Roadmap](#-roadmap)
-
----
-
-## 🏗 Architecture Overview
+# 🏗 Architecture Overview
 
 ```
                       +-----------------------------------+
@@ -71,17 +48,6 @@
 |  - wall-clock SIGKILL timer   |             |  - --memory / --cpus          |
 +-------------------------------+             +-------------------------------+
 ```
-
----
-
-## ⚡ Distributed Worker Architecture (Phase 2)
-
-Phase 2 scales the core engine into a high-concurrency event-driven cluster:
-- **Asynchronous Task Ingestion**: Submissions are pushed to Redis queues, returning `202 Accepted` immediately with a WebSocket subscription URL.
-- **Backpressure Protection**: Automatically protects the engine cluster by returning `429 Too Many Requests` (`Retry-After: 5`) when queue depth exceeds safety limits (`MaxQueueDepth = 500`).
-- **Warm Compilation Cache**: For compiled languages (C++), the source is compiled **once** per submission and executed across all testcases in the batch, slashing latency.
-- **WebSocket Streaming**: Live events (`QUEUED`, `COMPILING`, `RUNNING`, `TESTCASE_START`, `TESTCASE_PASSED`, `TESTCASE_FAILED`, `COMPLETED`, `FAILED`) stream directly to the browser.
-- **Zero-Dependency Mode**: Automatic fallback to in-memory queues, event channels, and stores when Redis is not present.
 
 ---
 
@@ -272,16 +238,6 @@ ws.onmessage = (event) => {
 
 ---
 
-## ⚡ Distributed Worker Architecture (Phase 2)
-
-Phase 2 scales the core engine into a high-concurrency event-driven cluster:
-- **Asynchronous Task Ingestion**: Submissions are pushed to Redis queues, returning `202 Accepted` immediately with a WebSocket subscription URL.
-- **Backpressure Protection**: Automatically protects the engine cluster by returning `429 Too Many Requests` (`Retry-After: 5`) when queue depth exceeds safety limits (`MaxQueueDepth = 500`).
-- **Warm Compilation Cache**: For compiled languages (C++), the source is compiled **once** per submission and executed across all testcases in the batch, slashing latency.
-- **WebSocket Streaming**: Live events (`QUEUED`, `COMPILING`, `RUNNING`, `TESTCASE_START`, `TESTCASE_PASSED`, `TESTCASE_FAILED`, `COMPLETED`, `FAILED`) stream directly to the browser.
-- **Zero-Dependency Mode**: Automatic fallback to in-memory queues, event channels, and stores when Redis is not present.
-
----
 
 ## ⚙ System Requirements & Kernel Setup
 
@@ -406,39 +362,6 @@ ws.onmessage = (event) => {
 
 ---
 
-## 🛡 Security Audit & Benchmarking Verification (Phase 3)
-
-Phase 3 delivers kernel-level exploit resilience, deterministic low-variance benchmarking, and continuous Prometheus observability.
-
-### 1. Seccomp-BPF Syscall Filtering
-Our custom [`seccomp-profile.json`](file:///c:/Cloud%20Projects/seccomp-profile.json) enforces an explicit syscall whitelist:
-- **Kills Dangerous Syscalls**: `ptrace`, `reboot`, `mount`, `umount`, `pivot_root`, `chroot`, `kexec_load`, `bpf`, `setns`, `unshare`.
-- **Denies Network Creation**: `socket`, `bind`, `connect`, `listen`, `accept`, `sendto`, `recvfrom` (`EPERM` / `ENETUNREACH`).
-- **Required Linux Capabilities**: `CAP_SYS_ADMIN` and `CAP_SYS_RESOURCE` (for loading Seccomp filters, cgroups v2 controller manipulation, and CPU core pinning).
-
-### 2. Deterministic CPU Pinning & Monotonic Timing
-- **Hardware Isolation**: Worker routines allocate dedicated physical cores (`taskset` / `cpuset.cpus` / `sched_setaffinity`), preventing cache thrashing and OS scheduler migration noise.
-- **Monotonic High-Resolution Timing**: Microsecond-accurate process telemetry recorded via `cpu.stat` (`user_usec` + `system_usec`) and monotonic timers (< 2% variance on identical runs).
-- **RAM-Backed Scratch Space**: Code executes inside RAM-backed `tmpfs` mounts (`size=64m,noexec,nosuid,nodev`), eliminating disk I/O bottlenecks.
-
-### 3. Automated Chaos Security Test Suite
-The security audit suite tests real-world exploit payloads in `testdata/exploits/`:
-
-| Exploit Payload | Attack Vector | Expected Defense |
-| :--- | :--- | :--- |
-| `testdata/exploits/fork_bomb.py` | Fork bomb process exhaustion | Blocked safely via cgroup `pids.max = 32` |
-| `testdata/exploits/socket_attack.py` | Outbound TCP socket connection | Blocked by Seccomp / `CLONE_NEWNET` |
-| `testdata/exploits/file_escape.py` | Unauthorized `/etc/shadow` access | Blocked by unprivileged UID `1001:1001` & read-only mounts |
-| `testdata/exploits/syscall_exploit.cpp` | Unauthorized `ptrace` / `reboot` syscall | Terminated via Seccomp `SCMP_ACT_KILL_PROCESS` |
-| `testdata/exploits/oom_attack.py` | Rapid physical RAM flood | Terminated by cgroup `memory.max` OOM killer |
-
-To execute the chaos audit suite:
-```bash
-go test -v ./pkg/security/...
-```
-
----
-
 ## 📊 Prometheus Observability & Metrics
 
 Metrics are exposed on the API gateway at `GET /metrics`:
@@ -486,22 +409,3 @@ Included in `testdata/payloads/`:
 
 ---
 
-## 🔬 Testing
-
-Run the complete Phase 1, Phase 2, and Phase 3 test suite:
-```bash
-make test
-```
-
----
-
-## 🗺 Roadmap
-
-- [ ] **Phase 3: Expanded Language Support**: Java 21, Rust 1.78, Go 1.22, Node.js 20.
-- [ ] **Phase 4: gRPC & REST Gateway**: Real-time WebSocket streaming of live execution states to the SpeedCode contest portal.
-- [ ] **Phase 5: Seccomp & eBPF Sandboxing**: Syscall filtering (`seccomp-bpf`) to restrict kernel syscall attacks.
-
----
-
-### Developed for GDG VIT Chennai
-Created with ❤️ by the GDG VIT Chennai Backend & Systems Engineering Team.
