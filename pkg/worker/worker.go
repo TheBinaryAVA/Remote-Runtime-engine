@@ -9,9 +9,11 @@ import (
 
 	"github.com/TheBinaryAVA/Remote-Runtime-engine/pkg/events"
 	"github.com/TheBinaryAVA/Remote-Runtime-engine/pkg/languages"
+	"github.com/TheBinaryAVA/Remote-Runtime-engine/pkg/metrics"
 	"github.com/TheBinaryAVA/Remote-Runtime-engine/pkg/models"
 	"github.com/TheBinaryAVA/Remote-Runtime-engine/pkg/queue"
 	"github.com/TheBinaryAVA/Remote-Runtime-engine/pkg/sandbox"
+	"github.com/TheBinaryAVA/Remote-Runtime-engine/pkg/security"
 	"github.com/TheBinaryAVA/Remote-Runtime-engine/pkg/store"
 )
 
@@ -227,7 +229,7 @@ func ProcessJob(ctx context.Context, job *queue.SubmissionJob, eventBus events.E
 		}
 	}
 
-	// 6. Complete Submission
+	// 6. Complete Submission & Record Telemetry
 	now := time.Now()
 	currentState.Status = events.StatusCompleted
 	currentState.Verdict = overallVerdict
@@ -237,6 +239,18 @@ func ProcessJob(ctx context.Context, job *queue.SubmissionJob, eventBus events.E
 	currentState.TotalCpuTimeMs = totalCpuTimeMs
 	currentState.CompletedAt = &now
 	_ = stateStore.SaveState(ctx, currentState)
+
+	// Record Prometheus Metrics
+	metrics.RecordSubmissionMetrics(job.Language, string(overallVerdict), sb.Name(), totalWallTimeMs, totalCpuTimeMs, maxPeakMemoryMB)
+
+	// Security audit for critical violations
+	if overallVerdict == models.VerdictMemoryLimitExceeded {
+		security.LogViolation(submissionID, job.Language, sb.Name(), security.ViolationMemoryOOM, fmt.Sprintf("Memory limit exceeded: %.2fMB > %dMB", maxPeakMemoryMB, job.MemoryLimitMB))
+		metrics.RecordViolation(string(security.ViolationMemoryOOM))
+	} else if overallVerdict == models.VerdictTimeLimitExceeded {
+		security.LogViolation(submissionID, job.Language, sb.Name(), security.ViolationTimeoutExceeded, fmt.Sprintf("Time limit exceeded: %.2fms > %dms", totalWallTimeMs, job.TimeLimitMs))
+		metrics.RecordViolation(string(security.ViolationTimeoutExceeded))
+	}
 
 	_ = eventBus.Publish(ctx, submissionID, &events.ExecutionEvent{
 		SubmissionID:    submissionID,
@@ -269,6 +283,14 @@ func failSubmission(ctx context.Context, id, lang string, total int, verdict mod
 		CompletedAt:    &now,
 	}
 	_ = st.SaveState(ctx, state)
+
+	metrics.RecordSubmissionMetrics(lang, string(verdict), "unknown", 0, 0, 0)
+	if verdict == models.VerdictCompilationError {
+		metrics.RecordViolation("COMPILATION_FAILURE")
+	} else {
+		metrics.RecordViolation(string(security.ViolationSyscallBlocked))
+	}
+
 	_ = bus.Publish(ctx, id, &events.ExecutionEvent{
 		SubmissionID: id,
 		Status:       events.StatusFailed,

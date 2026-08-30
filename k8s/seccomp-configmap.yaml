@@ -1,0 +1,41 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: speedcode-seccomp-profile
+  namespace: default
+data:
+  seccomp-profile.json: |
+    {
+      "defaultAction": "SCMP_ACT_ERRNO",
+      "architectures": ["SCMP_ARCH_X86_64", "SCMP_ARCH_X86", "SCMP_ARCH_AARCH64"],
+      "syscalls": [
+        {
+          "names": [
+            "read", "write", "open", "openat", "close", "fstat", "stat", "lstat", "lseek",
+            "mmap", "mprotect", "munmap", "brk", "rt_sigaction", "rt_sigprocmask", "rt_sigreturn",
+            "ioctl", "pread64", "pwrite64", "readv", "writev", "access", "faccessat", "pipe", "pipe2",
+            "select", "pselect6", "poll", "ppoll", "nanosleep", "clock_nanosleep", "clock_gettime",
+            "gettimeofday", "getpid", "getppid", "gettid", "getuid", "getgid", "geteuid", "getegid",
+            "exit", "exit_group", "futex", "sched_yield", "sched_getaffinity", "arch_prctl",
+            "set_tid_address", "set_robust_list", "rseq", "prlimit64", "getrandom", "sysinfo",
+            "uname", "getcwd", "readlink", "readlinkat", "fcntl", "dup", "dup2", "dup3",
+            "clone", "clone3", "wait4", "waitid", "execve"
+          ],
+          "action": "SCMP_ACT_ALLOW"
+        },
+        {
+          "names": [
+            "ptrace", "reboot", "kexec_load", "bpf", "setns", "unshare", "mount",
+            "umount", "umount2", "pivot_root", "chroot", "syslog"
+          ],
+          "action": "SCMP_ACT_KILL_PROCESS"
+        },
+        {
+          "names": [
+            "socket", "bind", "connect", "listen", "accept", "accept4", "sendto",
+            "recvfrom", "sendmsg", "recvmsg", "shutdown"
+          ],
+          "action": "SCMP_ACT_ERRNO"
+        }
+      ]
+    }

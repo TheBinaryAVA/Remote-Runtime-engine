@@ -14,6 +14,7 @@ import (
 
 	"github.com/TheBinaryAVA/Remote-Runtime-engine/pkg/events"
 	"github.com/TheBinaryAVA/Remote-Runtime-engine/pkg/languages"
+	"github.com/TheBinaryAVA/Remote-Runtime-engine/pkg/metrics"
 	"github.com/TheBinaryAVA/Remote-Runtime-engine/pkg/models"
 	"github.com/TheBinaryAVA/Remote-Runtime-engine/pkg/queue"
 	"github.com/TheBinaryAVA/Remote-Runtime-engine/pkg/store"
@@ -54,6 +55,7 @@ func NewServer(cfg ServerConfig, q queue.JobQueue, bus events.EventBus, st store
 	mux.HandleFunc("/api/v1/submissions", s.handleSubmissions)
 	mux.HandleFunc("/api/v1/submissions/", s.handleSubmissionDetailOrWS)
 	mux.HandleFunc("/api/v1/health", s.handleHealth)
+	mux.Handle("/metrics", metrics.Handler())
 
 	s.httpServer = &http.Server{
 		Addr:         cfg.Addr,

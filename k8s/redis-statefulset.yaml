@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: speedcode-redis
+  namespace: default
+spec:
+  serviceName: speedcode-redis
+  replicas: 1
+  selector:
+    matchLabels:
+      app: speedcode-redis
+  template:
+    metadata:
+      labels:
+        app: speedcode-redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          ports:
+            - containerPort: 6379
+              name: redis
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: speedcode-redis
+  namespace: default
+spec:
+  ports:
+    - port: 6379
+      targetPort: 6379
+  selector:
+    app: speedcode-redis

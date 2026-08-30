@@ -133,17 +133,20 @@ func (d *DockerSandbox) Execute(ctx context.Context, sCtx *SandboxContext) (*mod
 	cmdName, cmdArgs := sCtx.Language.RunCommand(targetFile)
 	execCommand := append([]string{cmdName}, cmdArgs...)
 
-	// Configure strict container isolation and cgroup limits
+	pinnedCore := AllocateNextCore()
+
+	// Configure strict container isolation, cgroup limits, and security boundaries
 	dockerArgs := []string{
 		"run",
 		"-i",
 		"--name", containerName,
 		"--network", "none",
 		"--read-only",
-		"--tmpfs", "/tmp:rw,noexec,nosuid,size=64m",
+		"--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=64m",
 		"--memory", fmt.Sprintf("%dm", sCtx.Request.MemoryLimitMB),
 		"--memory-swap", fmt.Sprintf("%dm", sCtx.Request.MemoryLimitMB),
 		"--cpus", fmt.Sprintf("%.2f", sCtx.Request.CpuQuota),
+		"--cpuset-cpus", fmt.Sprintf("%d", pinnedCore),
 		"--pids-limit", fmt.Sprintf("%d", sCtx.Request.PidsLimit),
 		"--cap-drop", "ALL",
 		"--security-opt", "no-new-privileges",

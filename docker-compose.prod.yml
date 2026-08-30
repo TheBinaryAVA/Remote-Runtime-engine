@@ -1,0 +1,113 @@
+version: "3.8"
+
+services:
+  # ===================================================
+  # Distributed Task Queue & Real-Time Event Bus
+  # ===================================================
+  redis:
+    image: redis:7-alpine
+    container_name: speedcode-redis
+    restart: always
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "512mb", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - redis-prod-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ===================================================
+  # REST API Gateway & Prometheus Metric Scraper
+  # ===================================================
+  api-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: api
+    container_name: speedcode-api
+    restart: always
+    ports:
+      - "8080:8080"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - PORT=8080
+      - MAX_QUEUE_DEPTH=1000
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # ===================================================
+  # CPU-Pinned Worker Pool #1 (Dedicated Core 0, 1)
+  # ===================================================
+  worker-pool-1:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: worker
+    container_name: speedcode-worker-1
+    restart: always
+    cpuset: "0,1"
+    cap_drop:
+      - ALL
+    cap_add:
+      - SYS_ADMIN
+      - SYS_RESOURCE
+    security_opt:
+      - seccomp:seccomp-profile.json
+      - no-new-privileges:true
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - CONCURRENCY=4
+      - WORKER_ID=worker-node-prod-1
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # ===================================================
+  # CPU-Pinned Worker Pool #2 (Dedicated Core 2, 3)
+  # ===================================================
+  worker-pool-2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: worker
+    container_name: speedcode-worker-2
+    restart: always
+    cpuset: "2,3"
+    cap_drop:
+      - ALL
+    cap_add:
+      - SYS_ADMIN
+      - SYS_RESOURCE
+    security_opt:
+      - seccomp:seccomp-profile.json
+      - no-new-privileges:true
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - CONCURRENCY=4
+      - WORKER_ID=worker-node-prod-2
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # ===================================================
+  # Prometheus Observability Server
+  # ===================================================
+  prometheus:
+    image: prom/prometheus:v2.49.1
+    container_name: speedcode-prometheus
+    restart: always
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prom-data:/prometheus
+    depends_on:
+      - api-gateway
+
+volumes:
+  redis-prod-data:
+  prom-data:

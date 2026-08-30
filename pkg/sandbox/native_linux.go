@@ -177,14 +177,15 @@ func (n *NativeCgroupV2Sandbox) Execute(ctx context.Context, sCtx *SandboxContex
 	cmd := exec.Command(cmdName, cmdArgs...)
 	cmd.Dir = sCtx.WorkingDir
 
-	// Configure unprivileged execution & process group
+	// Configure unprivileged execution & process isolation namespaces
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Setpgid: true,
 		Credential: &syscall.Credential{
 			Uid: uint32(DefaultSandboxUID),
 			Gid: uint32(DefaultSandboxGID),
 		},
-		Pdeathsig: syscall.SIGKILL,
+		Pdeathsig:  syscall.SIGKILL,
+		Cloneflags: syscall.CLONE_NEWNET | syscall.CLONE_NEWIPC | syscall.CLONE_NEWUTS,
 	}
 
 	if sCtx.Request.Stdin != "" {
@@ -203,12 +204,16 @@ func (n *NativeCgroupV2Sandbox) Execute(ctx context.Context, sCtx *SandboxContex
 		return nil, fmt.Errorf("failed to start process: %w", err)
 	}
 
-	// Move the process into the cgroup v2 slice immediately
+	// 1. Move the process into the cgroup v2 slice immediately
 	procsFile := filepath.Join(sCtx.CgroupPath, "cgroup.procs")
 	if err := os.WriteFile(procsFile, []byte(strconv.Itoa(cmd.Process.Pid)+"\n"), 0644); err != nil {
 		_ = cmd.Process.Kill()
 		return nil, fmt.Errorf("failed to attach process to cgroup: %w", err)
 	}
+
+	// 2. Pin process to dedicated CPU core for deterministic noise-free benchmarking
+	targetCore := AllocateNextCore()
+	_ = PinProcessToCore(cmd.Process.Pid, targetCore)
 
 	// Wait for process completion or watchdog timeout
 	done := make(chan error, 1)
