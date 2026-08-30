@@ -4,50 +4,8 @@
 ---
 # 🏗 Architecture Overview
 
-```
-                      +-----------------------------------+
-                      |   Client Application / Web UI     |
-                      +-----------------+-----------------+
-                                        |
-                 +----------------------+----------------------+
-                 | (REST POST /submissions)                   | (WebSocket /ws)
-                 v                                             v
-+-----------------------------------+       +-----------------------------------+
-|      REST API Gateway             |       |    WebSocket Streaming Hub        |
-|  - Rate Limiting & Backpressure   |       |  - Multiplexed Event Channels     |
-|  - Request Validation             |       |  - Real-time JSON Frame Broadcast |
-+-----------------+-----------------+       +-----------------+-----------------+
-                  |                                           ^
-                  v                                           | (Subscribe submission:id)
-+-----------------------------------+       +-----------------+-----------------+
-|  Distributed Task Queue (Redis)   |       |    Redis Pub/Sub Event Bus        |
-|  - Atomic LPUSH / BRPOP           |       |  - QUEUED -> COMPILING -> RUNNING |
-|  - Depth Monitoring               |       |  - TESTCASE_PASSED -> COMPLETED   |
-+-----------------+-----------------+       +-----------------+-----------------+
-                  |                                           ^
-                  +---------------------+---------------------+
-                                        | (Pull Job / Publish Events)
-                                        v
-                      +-----------------------------------+
-                      |    Scalable Worker Pool Daemon    |
-                      |  - Concurrent Goroutine Workers   |
-                      |  - Warm-Pool Workspace Recycling  |
-                      |  - One-Time Compilation Cache     |
-                      |  - Crash & Panic Recovery Guards  |
-                      +-----------------+-----------------+
-                                        |
-                 +----------------------+----------------------+
-                 |                                             |
-                 v                                             v
-+-------------------------------+             +-------------------------------+
-|    Native Linux cgroups v2    |             |    Containerized OCI Runner   |
-|  - memory.max / memory.peak   |             |  - --read-only rootfs         |
-|  - cpu.max / cpu.stat         |             |  - --network none             |
-|  - pids.max (fork bomb def)   |             |  - --tmpfs ephemeral mounts   |
-|  - unprivileged UID:GID       |             |  - --cap-drop ALL             |
-|  - wall-clock SIGKILL timer   |             |  - --memory / --cpus          |
-+-------------------------------+             +-------------------------------+
-```
+<img width="1536" height="1024" alt="ChatGPT Image Aug 30, 2026, 05_18_39 PM" src="https://github.com/user-attachments/assets/1dcdc40a-acba-4f3c-8c5e-c474dec3e893" />
+
 
 ---
 
