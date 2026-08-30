@@ -1,4 +1,4 @@
-.PHONY: all build build-all test test-linux docker-build compose-up compose-down clean
+.PHONY: all build build-all test test-linux docker-build compose-up compose-down compose-prod verify run clean
 
 BINARY_ENGINE=speedcode-engine
 BINARY_API=speedcode-api
@@ -21,6 +21,14 @@ test:
 	@echo "==> Running complete test suite..."
 	go test -v -race -cover ./...
 
+verify:
+	@echo "==> Running automated end-to-end diagnostic suite..."
+	python3 verify.py
+
+run:
+	@echo "==> Executing master setup and verification..."
+	chmod +x run.sh && ./run.sh
+
 test-linux:
 	@echo "==> Verifying Linux cross-compilation..."
 	GOOS=linux GOARCH=amd64 go build -o /dev/null ./...
@@ -32,6 +40,10 @@ docker-build:
 compose-up:
 	@echo "==> Launching distributed cluster (Redis, API Gateway, Workers)..."
 	docker-compose up -d --build
+
+compose-prod:
+	@echo "==> Launching production cluster with Prometheus and CPU pinning..."
+	docker-compose -f docker-compose.prod.yml up -d --build
 
 compose-down:
 	@echo "==> Stopping distributed cluster..."

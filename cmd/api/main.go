@@ -16,12 +16,14 @@ import (
 	"github.com/TheBinaryAVA/Remote-Runtime-engine/pkg/events"
 	"github.com/TheBinaryAVA/Remote-Runtime-engine/pkg/queue"
 	"github.com/TheBinaryAVA/Remote-Runtime-engine/pkg/store"
+	"github.com/TheBinaryAVA/Remote-Runtime-engine/pkg/worker"
 )
 
 func main() {
 	port := flag.Int("port", 8080, "HTTP server listening port")
 	redisURL := flag.String("redis", "", "Redis connection URL (e.g. redis://localhost:6379/0). If empty, uses in-memory mode.")
 	maxQueueDepth := flag.Int64("max-queue-depth", 500, "Maximum allowed queue depth before backpressure 429")
+	workers := flag.Int("workers", 4, "Number of embedded workers to start in standalone in-memory mode (set 0 to disable)")
 
 	flag.Parse()
 
@@ -51,10 +53,21 @@ func main() {
 		bus = events.NewRedisEventBus(rdb)
 		st = store.NewRedisStore(rdb, 24*time.Hour)
 	} else {
-		log.Println("No Redis URL provided; running API gateway in In-Memory mode.")
+		log.Println("No Redis URL provided; running API gateway in In-Memory standalone mode.")
 		q = queue.NewMemoryQueue(1000)
 		bus = events.NewMemoryEventBus()
 		st = store.NewMemoryStore()
+
+		if *workers > 0 {
+			log.Printf("Starting %d embedded worker routines for in-memory job processing...", *workers)
+			poolCfg := worker.PoolConfig{
+				Concurrency: *workers,
+				WorkerID:    "embedded-worker-pool",
+			}
+			pool := worker.NewWorkerPool(poolCfg, q, bus, st)
+			pool.Start(ctx)
+			defer pool.Stop()
+		}
 	}
 
 	serverCfg := api.ServerConfig{
